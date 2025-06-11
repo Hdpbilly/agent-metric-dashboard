@@ -1,0 +1,11 @@
+[package]
+name = "agent-dashboard"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ratatui = { version = "0.27.0", features = ["crossterm"] }
+crossterm = { version = "0.27.0", features = ["event-stream"] }
+rand = "0.8.5"
+# Added for easy timestamp formatting
+chrono = "0.4.38"
