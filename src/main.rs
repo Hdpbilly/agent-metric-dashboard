@@ -59,6 +59,20 @@ impl Model {
             + (output_tokens as f64 * self.joules_per_output_token);
         base_energy * self.pue_factor
     }
+
+    fn max_tokens_from_funds(&self, available_funds: f64) -> u64 {
+        if self.cost_per_kilo_token <= 0.0 {
+            return u64::MAX;
+        }
+        ((available_funds / self.cost_per_kilo_token) * 1000.0) as u64
+    }
+
+    fn energy_for_max_tokens(&self, max_tokens: u64) -> f64 {
+        // Assume 60% input, 40% output ratio for estimation
+        let input_tokens = (max_tokens as f64 * 0.6) as u64;
+        let output_tokens = (max_tokens as f64 * 0.4) as u64;
+        self.calculate_energy(input_tokens, output_tokens)
+    }
 }
 
 #[derive(Clone)]
@@ -503,7 +517,7 @@ fn render_risk_component(f: &mut Frame, label: &str, value: f64, area: Rect) {
 
 fn render_core_types_panel(f: &mut Frame, agent: &AgentState, area: Rect) {
     let core_block = Block::default()
-        .title(" Core Types & Operations ")
+        .title(" Core Types & Operations (Calls | Success%) ")
         .borders(Borders::ALL);
 
     let inner = core_block.inner(area);
@@ -562,14 +576,14 @@ fn render_core_types_panel(f: &mut Frame, agent: &AgentState, area: Rect) {
 
             lines.push(Line::from(vec![
                 Span::styled(frequency_indicator, Style::default().fg(Color::White)),
-                Span::raw(format!(" {:<14}", profile.name.replace("-", " "))),
+                Span::raw(format!(" {:<18}", profile.name.replace("-", " "))),
                 Span::styled(
-                    format!("{:>3}", stats.total_calls),
+                    format!("{:>4}", stats.total_calls),
                     Style::default().fg(Color::Gray),
                 ),
-                Span::raw(" "),
+                Span::raw("  "),
                 Span::styled(
-                    format!("{:.0}%", stats.average_success_rate * 100.0),
+                    format!("{:>3.0}%", stats.average_success_rate * 100.0),
                     Style::default().fg(success_color),
                 ),
             ]));
@@ -1183,15 +1197,39 @@ fn ui(f: &mut Frame, agent: &AgentState) {
         left_chunks[0],
     );
 
-    let header = Row::new(["Model", "Cost/1k", "J/in", "J/out", "PUE"])
+    let header = Row::new(["Model", "Cost/1k", "J/in", "J/out", "PUE", "Max Tok", "Max kJ"])
         .style(Style::default().fg(Color::Yellow));
     let rows = agent.models.values().map(|m| {
+        let max_tokens = m.max_tokens_from_funds(agent.liquid_funds);
+        let max_energy = m.energy_for_max_tokens(max_tokens);
+        
+        // Format large numbers appropriately
+        let max_tokens_str = if max_tokens == u64::MAX {
+            "∞".to_string()
+        } else if max_tokens > 1_000_000 {
+            format!("{:.1}M", max_tokens as f64 / 1_000_000.0)
+        } else if max_tokens > 1_000 {
+            format!("{:.1}k", max_tokens as f64 / 1_000.0)
+        } else {
+            max_tokens.to_string()
+        };
+        
+        let max_energy_str = if max_energy > 1_000_000.0 {
+            format!("{:.1}M", max_energy / 1_000_000.0)
+        } else if max_energy > 1_000.0 {
+            format!("{:.1}k", max_energy / 1_000.0)
+        } else {
+            format!("{:.1}", max_energy)
+        };
+
         Row::new(vec![
             Cell::from(m.name.clone()),
             Cell::from(format!("${:.4}", m.cost_per_kilo_token)),
             Cell::from(format!("{:.1}", m.joules_per_input_token)),
             Cell::from(format!("{:.1}", m.joules_per_output_token)),
             Cell::from(format!("{:.2}", m.pue_factor)),
+            Cell::from(max_tokens_str),
+            Cell::from(max_energy_str),
         ])
     });
     f.render_widget(
@@ -1203,12 +1241,14 @@ fn ui(f: &mut Frame, agent: &AgentState) {
                 Constraint::Max(7),
                 Constraint::Max(7),
                 Constraint::Max(7),
+                Constraint::Max(8),
+                Constraint::Max(8),
             ],
         )
         .header(header)
         .block(
             Block::default()
-                .title(" Models (J/token) ")
+                .title(" Models & Energy Capacity ")
                 .borders(Borders::ALL),
         ),
         left_chunks[1],
